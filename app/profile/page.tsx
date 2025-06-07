@@ -1,65 +1,61 @@
 "use client"
 
+import type React from "react"
+
 import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { supabase } from "@/lib/supabase"
-import Navbar from "@/components/layout/navbar"
-import MovieCard from "@/components/movies/movie-card"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Textarea } from "@/components/ui/textarea"
+import { Progress } from "@/components/ui/progress"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
-import { Badge } from "@/components/ui/badge"
-import { Alert, AlertDescription } from "@/components/ui/alert"
+import { CalendarDays, MapPin, Globe, Star, Film, MessageSquare, Heart, Trophy, Edit, Camera } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
-import { User, Heart, Star, Eye, Calendar, Mail, Edit, Save, X } from "lucide-react"
-import type { User as SupabaseUser } from "@supabase/supabase-js"
+import Navbar from "@/components/layout/navbar"
 
 interface Profile {
   id: string
+  full_name: string
+  username: string
   email: string
-  full_name: string | null
-  avatar_url: string | null
-  role: "user" | "admin"
+  avatar_url: string
+  bio: string
+  location: string
+  website: string
+  birth_date: string
   created_at: string
 }
 
-interface Movie {
-  id: number
-  title: string
-  title_uz: string | null
-  poster_url: string | null
-  rating: number
-  release_year: number | null
+interface UserStats {
+  total_ratings: number
+  total_comments: number
+  total_favorites: number
+  average_rating: number
+  movies_watched: number
+  reviews_written: number
 }
 
-interface UserStats {
-  watchlistCount: number
-  ratingsCount: number
-  commentsCount: number
-  avgRating: number
+interface Achievement {
+  id: string
+  name: string
+  description: string
+  icon: string
+  earned: boolean
+  progress: number
+  max_progress: number
 }
 
 export default function ProfilePage() {
-  const [user, setUser] = useState<SupabaseUser | null>(null)
   const [profile, setProfile] = useState<Profile | null>(null)
-  const [stats, setStats] = useState<UserStats>({
-    watchlistCount: 0,
-    ratingsCount: 0,
-    commentsCount: 0,
-    avgRating: 0,
-  })
-  const [watchlist, setWatchlist] = useState<Movie[]>([])
-  const [ratings, setRatings] = useState<(Movie & { user_rating: number })[]>([])
+  const [stats, setStats] = useState<UserStats | null>(null)
+  const [achievements, setAchievements] = useState<Achievement[]>([])
+  const [isEditing, setIsEditing] = useState(false)
   const [loading, setLoading] = useState(true)
-  const [editing, setEditing] = useState(false)
-  const [editForm, setEditForm] = useState({
-    full_name: "",
-    email: "",
-  })
-
+  const [saving, setSaving] = useState(false)
   const router = useRouter()
   const { toast } = useToast()
 
@@ -72,17 +68,13 @@ export default function ProfilePage() {
       const {
         data: { user },
       } = await supabase.auth.getUser()
-
       if (!user) {
         router.push("/auth")
         return
       }
-
-      setUser(user)
-      await fetchProfile(user.id)
-      await fetchUserStats(user.id)
-      await fetchWatchlist(user.id)
-      await fetchRatings(user.id)
+      fetchProfile()
+      fetchStats()
+      fetchAchievements()
     } catch (error) {
       console.error("Auth error:", error)
       router.push("/auth")
@@ -91,184 +83,168 @@ export default function ProfilePage() {
     }
   }
 
-  const fetchProfile = async (userId: string) => {
+  const fetchProfile = async () => {
     try {
-      const { data, error } = await supabase.from("profiles").select("*").eq("id", userId).single()
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
+      if (!user) return
+
+      const { data, error } = await supabase.from("profiles").select("*").eq("id", user.id).single()
 
       if (error) throw error
-
       setProfile(data)
-      setEditForm({
-        full_name: data.full_name || "",
-        email: data.email || "",
-      })
     } catch (error) {
       console.error("Error fetching profile:", error)
+      toast({
+        title: "Xatolik",
+        description: "Profil ma'lumotlarini yuklashda xatolik yuz berdi",
+        variant: "destructive",
+      })
+    } finally {
+      setLoading(false)
     }
   }
 
-  const fetchUserStats = async (userId: string) => {
+  const fetchStats = async () => {
     try {
-      const [watchlistResult, ratingsResult, commentsResult] = await Promise.all([
-        supabase.from("watchlist").select("id", { count: "exact", head: true }).eq("user_id", userId),
-        supabase.from("ratings").select("rating").eq("user_id", userId),
-        supabase.from("comments").select("id", { count: "exact", head: true }).eq("user_id", userId),
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
+      if (!user) return
+
+      // Fetch user statistics
+      const [ratingsResult, commentsResult, favoritesResult] = await Promise.all([
+        supabase.from("ratings").select("rating").eq("user_id", user.id),
+        supabase.from("comments").select("id").eq("user_id", user.id),
+        supabase.from("favorites").select("id").eq("user_id", user.id),
       ])
 
-      const avgRating = ratingsResult.data?.length
-        ? ratingsResult.data.reduce((sum, r) => sum + r.rating, 0) / ratingsResult.data.length
-        : 0
+      const ratings = ratingsResult.data || []
+      const comments = commentsResult.data || []
+      const favorites = favoritesResult.data || []
+
+      const averageRating = ratings.length > 0 ? ratings.reduce((sum, r) => sum + r.rating, 0) / ratings.length : 0
 
       setStats({
-        watchlistCount: watchlistResult.count || 0,
-        ratingsCount: ratingsResult.data?.length || 0,
-        commentsCount: commentsResult.count || 0,
-        avgRating,
+        total_ratings: ratings.length,
+        total_comments: comments.length,
+        total_favorites: favorites.length,
+        average_rating: averageRating,
+        movies_watched: ratings.length,
+        reviews_written: comments.length,
       })
     } catch (error) {
       console.error("Error fetching stats:", error)
     }
   }
 
-  const fetchWatchlist = async (userId: string) => {
-    try {
-      const { data, error } = await supabase
-        .from("watchlist")
-        .select(`
-          movies (
-            id,
-            title,
-            title_uz,
-            poster_url,
-            rating,
-            release_year
-          )
-        `)
-        .eq("user_id", userId)
-        .order("created_at", { ascending: false })
-
-      if (error) throw error
-
-      const movies = data?.map((item: any) => item.movies).filter(Boolean) || []
-      setWatchlist(movies)
-    } catch (error) {
-      console.error("Error fetching watchlist:", error)
-    }
+  const fetchAchievements = () => {
+    // Mock achievements data
+    const mockAchievements: Achievement[] = [
+      {
+        id: "1",
+        name: "Kino Sevuvchi",
+        description: "10 ta filmni baholang",
+        icon: "🎬",
+        earned: (stats?.total_ratings || 0) >= 10,
+        progress: stats?.total_ratings || 0,
+        max_progress: 10,
+      },
+      {
+        id: "2",
+        name: "Tanqidchi",
+        description: "25 ta sharh yozing",
+        icon: "✍️",
+        earned: (stats?.total_comments || 0) >= 25,
+        progress: stats?.total_comments || 0,
+        max_progress: 25,
+      },
+      {
+        id: "3",
+        name: "Kolleksioner",
+        description: "50 ta filmni sevimlilarga qo'shing",
+        icon: "❤️",
+        earned: (stats?.total_favorites || 0) >= 50,
+        progress: stats?.total_favorites || 0,
+        max_progress: 50,
+      },
+      {
+        id: "4",
+        name: "Ekspert",
+        description: "O'rtacha 4+ baho bering",
+        icon: "⭐",
+        earned: (stats?.average_rating || 0) >= 4,
+        progress: Math.round((stats?.average_rating || 0) * 10),
+        max_progress: 50,
+      },
+    ]
+    setAchievements(mockAchievements)
   }
 
-  const fetchRatings = async (userId: string) => {
+  const updateProfile = async (updatedData: Partial<Profile>) => {
+    setSaving(true)
     try {
-      const { data, error } = await supabase
-        .from("ratings")
-        .select(`
-          rating,
-          movies (
-            id,
-            title,
-            title_uz,
-            poster_url,
-            rating,
-            release_year
-          )
-        `)
-        .eq("user_id", userId)
-        .order("created_at", { ascending: false })
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
+      if (!user) return
+
+      const { error } = await supabase.from("profiles").update(updatedData).eq("id", user.id)
 
       if (error) throw error
 
-      const moviesWithRatings =
-        data
-          ?.map((item: any) => ({
-            ...item.movies,
-            user_rating: item.rating,
-          }))
-          .filter(Boolean) || []
-
-      setRatings(moviesWithRatings)
-    } catch (error) {
-      console.error("Error fetching ratings:", error)
-    }
-  }
-
-  const handleUpdateProfile = async () => {
-    if (!user) return
-
-    try {
-      const { error } = await supabase
-        .from("profiles")
-        .update({
-          full_name: editForm.full_name,
-          email: editForm.email,
-        })
-        .eq("id", user.id)
-
-      if (error) throw error
-
-      await fetchProfile(user.id)
-      setEditing(false)
-
+      setProfile((prev) => (prev ? { ...prev, ...updatedData } : null))
+      setIsEditing(false)
       toast({
         title: "Muvaffaqiyat",
-        description: "Profil ma'lumotlari yangilandi",
+        description: "Profil muvaffaqiyatli yangilandi",
       })
     } catch (error) {
       console.error("Error updating profile:", error)
       toast({
         title: "Xatolik",
-        description: "Profil yangilanmadi",
+        description: "Profilni yangilashda xatolik yuz berdi",
         variant: "destructive",
       })
+    } finally {
+      setSaving(false)
     }
   }
 
-  const removeFromWatchlist = async (movieId: number) => {
-    if (!user) return
-
-    try {
-      const { error } = await supabase.from("watchlist").delete().eq("user_id", user.id).eq("movie_id", movieId)
-
-      if (error) throw error
-
-      await fetchWatchlist(user.id)
-      await fetchUserStats(user.id)
-
-      toast({
-        title: "O'chirildi",
-        description: "Kino sevimlilar ro'yxatidan o'chirildi",
-      })
-    } catch (error) {
-      console.error("Error removing from watchlist:", error)
+  const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault()
+    const formData = new FormData(e.currentTarget)
+    const updatedData = {
+      full_name: formData.get("full_name") as string,
+      username: formData.get("username") as string,
+      bio: formData.get("bio") as string,
+      location: formData.get("location") as string,
+      website: formData.get("website") as string,
+      birth_date: formData.get("birth_date") as string,
     }
+    updateProfile(updatedData)
   }
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-background">
-        <Navbar />
-        <main className="container mx-auto px-4 py-8">
-          <div className="animate-pulse space-y-4">
-            <div className="h-8 bg-gray-200 rounded w-1/4"></div>
-            <div className="h-32 bg-gray-200 rounded"></div>
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-              {Array.from({ length: 4 }).map((_, i) => (
-                <div key={i} className="h-24 bg-gray-200 rounded"></div>
-              ))}
-            </div>
-          </div>
-        </main>
+      <div className="container mx-auto px-4 py-8">
+        <div className="animate-pulse space-y-4">
+          <div className="h-32 bg-gray-200 rounded-lg"></div>
+          <div className="h-64 bg-gray-200 rounded-lg"></div>
+        </div>
       </div>
     )
   }
 
   if (!profile) {
     return (
-      <div className="min-h-screen bg-background">
-        <Navbar />
-        <main className="container mx-auto px-4 py-8">
-          <Alert>
-            <AlertDescription>Profil ma'lumotlari topilmadi.</AlertDescription>
-          </Alert>
-        </main>
+      <div className="container mx-auto px-4 py-8">
+        <Card>
+          <CardContent className="p-8 text-center">
+            <p>Profil topilmadi</p>
+          </CardContent>
+        </Card>
       </div>
     )
   }
@@ -276,186 +252,294 @@ export default function ProfilePage() {
   return (
     <div className="min-h-screen bg-background">
       <Navbar />
-
-      <main className="container mx-auto px-4 py-8">
+      <div className="container mx-auto px-4 py-8 space-y-6">
         {/* Profile Header */}
-        <Card className="mb-8">
-          <CardHeader>
-            <div className="flex items-start justify-between">
-              <div className="flex items-center space-x-4">
-                <Avatar className="h-20 w-20">
-                  <AvatarImage src={profile.avatar_url || ""} />
+        <Card>
+          <CardContent className="p-6">
+            <div className="flex flex-col md:flex-row gap-6">
+              <div className="relative">
+                <Avatar className="w-32 h-32">
+                  <AvatarImage src={profile.avatar_url || "/placeholder.svg"} alt={profile.full_name} />
                   <AvatarFallback className="text-2xl">
-                    {profile.full_name?.charAt(0) || profile.email?.charAt(0) || "U"}
+                    {profile.full_name?.charAt(0) || profile.username?.charAt(0)}
                   </AvatarFallback>
                 </Avatar>
-                <div>
-                  <CardTitle className="text-2xl">{profile.full_name || "Foydalanuvchi"}</CardTitle>
-                  <CardDescription className="flex items-center space-x-2 mt-1">
-                    <Mail className="h-4 w-4" />
-                    <span>{profile.email}</span>
-                  </CardDescription>
-                  <div className="flex items-center space-x-2 mt-2">
-                    <Calendar className="h-4 w-4" />
-                    <span className="text-sm text-muted-foreground">
-                      {new Date(profile.created_at).toLocaleDateString("uz-UZ")} dan beri a'zo
-                    </span>
-                  </div>
-                  {profile.role === "admin" && (
-                    <Badge variant="secondary" className="mt-2">
-                      Administrator
-                    </Badge>
-                  )}
-                </div>
-              </div>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setEditing(!editing)}
-                className="flex items-center space-x-2"
-              >
-                {editing ? <X className="h-4 w-4" /> : <Edit className="h-4 w-4" />}
-                <span>{editing ? "Bekor qilish" : "Tahrirlash"}</span>
-              </Button>
-            </div>
-
-            {editing && (
-              <div className="mt-6 space-y-4 border-t pt-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="full_name">To'liq ism</Label>
-                    <Input
-                      id="full_name"
-                      value={editForm.full_name}
-                      onChange={(e) => setEditForm({ ...editForm, full_name: e.target.value })}
-                      placeholder="Ismingiz va familiyangiz"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="email">Email</Label>
-                    <Input
-                      id="email"
-                      type="email"
-                      value={editForm.email}
-                      onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
-                      placeholder="email@example.com"
-                    />
-                  </div>
-                </div>
-                <Button onClick={handleUpdateProfile} className="flex items-center space-x-2">
-                  <Save className="h-4 w-4" />
-                  <span>Saqlash</span>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="absolute bottom-0 right-0 rounded-full w-8 h-8 p-0"
+                  onClick={() => setIsEditing(true)}
+                >
+                  <Camera className="w-4 h-4" />
                 </Button>
               </div>
-            )}
-          </CardHeader>
+
+              <div className="flex-1 space-y-4">
+                <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                  <div>
+                    <h1 className="text-3xl font-bold">{profile.full_name}</h1>
+                    <p className="text-muted-foreground">@{profile.username}</p>
+                  </div>
+                  <Button onClick={() => setIsEditing(!isEditing)} variant={isEditing ? "outline" : "default"}>
+                    <Edit className="w-4 h-4 mr-2" />
+                    {isEditing ? "Bekor qilish" : "Tahrirlash"}
+                  </Button>
+                </div>
+
+                {profile.bio && <p className="text-gray-600">{profile.bio}</p>}
+
+                <div className="flex flex-wrap gap-4 text-sm text-muted-foreground">
+                  {profile.location && (
+                    <div className="flex items-center gap-1">
+                      <MapPin className="w-4 h-4" />
+                      {profile.location}
+                    </div>
+                  )}
+                  {profile.website && (
+                    <div className="flex items-center gap-1">
+                      <Globe className="w-4 h-4" />
+                      <a href={profile.website} target="_blank" rel="noopener noreferrer" className="hover:underline">
+                        {profile.website}
+                      </a>
+                    </div>
+                  )}
+                  <div className="flex items-center gap-1">
+                    <CalendarDays className="w-4 h-4" />
+                    {new Date(profile.created_at).toLocaleDateString("uz-UZ")} dan beri
+                  </div>
+                </div>
+              </div>
+            </div>
+          </CardContent>
         </Card>
 
-        {/* Stats Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-          <Card>
-            <CardContent className="p-6 text-center">
-              <Heart className="h-8 w-8 text-red-500 mx-auto mb-2" />
-              <div className="text-2xl font-bold">{stats.watchlistCount}</div>
-              <div className="text-sm text-muted-foreground">Sevimli kinolar</div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardContent className="p-6 text-center">
-              <Star className="h-8 w-8 text-yellow-500 mx-auto mb-2" />
-              <div className="text-2xl font-bold">{stats.ratingsCount}</div>
-              <div className="text-sm text-muted-foreground">Baholangan kinolar</div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardContent className="p-6 text-center">
-              <User className="h-8 w-8 text-blue-500 mx-auto mb-2" />
-              <div className="text-2xl font-bold">{stats.commentsCount}</div>
-              <div className="text-sm text-muted-foreground">Yozilgan sharhlar</div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardContent className="p-6 text-center">
-              <Eye className="h-8 w-8 text-green-500 mx-auto mb-2" />
-              <div className="text-2xl font-bold">{stats.avgRating.toFixed(1)}</div>
-              <div className="text-sm text-muted-foreground">O'rtacha reyting</div>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Content Tabs */}
-        <Tabs defaultValue="watchlist" className="space-y-6">
-          <TabsList className="grid w-full grid-cols-2">
-            <TabsTrigger value="watchlist">Sevimli Kinolar</TabsTrigger>
-            <TabsTrigger value="ratings">Baholangan Kinolar</TabsTrigger>
+        <Tabs defaultValue="overview" className="space-y-6">
+          <TabsList className="grid w-full grid-cols-4">
+            <TabsTrigger value="overview">Umumiy</TabsTrigger>
+            <TabsTrigger value="stats">Statistika</TabsTrigger>
+            <TabsTrigger value="achievements">Yutuqlar</TabsTrigger>
+            <TabsTrigger value="edit">Tahrirlash</TabsTrigger>
           </TabsList>
 
-          <TabsContent value="watchlist">
+          <TabsContent value="overview" className="space-y-6">
+            {/* Quick Stats */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <Card>
+                <CardContent className="p-4 text-center">
+                  <Film className="w-8 h-8 mx-auto mb-2 text-blue-500" />
+                  <div className="text-2xl font-bold">{stats?.movies_watched || 0}</div>
+                  <div className="text-sm text-muted-foreground">Ko'rilgan filmlar</div>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardContent className="p-4 text-center">
+                  <Star className="w-8 h-8 mx-auto mb-2 text-yellow-500" />
+                  <div className="text-2xl font-bold">{stats?.average_rating?.toFixed(1) || "0.0"}</div>
+                  <div className="text-sm text-muted-foreground">O'rtacha baho</div>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardContent className="p-4 text-center">
+                  <MessageSquare className="w-8 h-8 mx-auto mb-2 text-green-500" />
+                  <div className="text-2xl font-bold">{stats?.total_comments || 0}</div>
+                  <div className="text-sm text-muted-foreground">Sharhlar</div>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardContent className="p-4 text-center">
+                  <Heart className="w-8 h-8 mx-auto mb-2 text-red-500" />
+                  <div className="text-2xl font-bold">{stats?.total_favorites || 0}</div>
+                  <div className="text-sm text-muted-foreground">Sevimlilar</div>
+                </CardContent>
+              </Card>
+            </div>
+
+            {/* Recent Activity */}
             <Card>
               <CardHeader>
-                <CardTitle>Sevimli Kinolar</CardTitle>
-                <CardDescription>Siz sevimli deb belgilagan kinolar ro'yxati</CardDescription>
+                <CardTitle>So'nggi faoliyat</CardTitle>
               </CardHeader>
               <CardContent>
-                {watchlist.length > 0 ? (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
-                    {watchlist.map((movie) => (
-                      <div key={movie.id} className="relative">
-                        <MovieCard movie={{ ...movie, genres: [], tags: [] }} />
-                        <Button
-                          variant="destructive"
-                          size="sm"
-                          className="absolute top-2 right-2"
-                          onClick={() => removeFromWatchlist(movie.id)}
-                        >
-                          <X className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    ))}
+                <div className="space-y-4">
+                  <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
+                    <Star className="w-5 h-5 text-yellow-500" />
+                    <div>
+                      <p className="font-medium">"Inception" filmiga 5 yulduz berdi</p>
+                      <p className="text-sm text-muted-foreground">2 soat oldin</p>
+                    </div>
                   </div>
-                ) : (
-                  <div className="text-center py-8 text-muted-foreground">
-                    <Heart className="h-16 w-16 mx-auto mb-4 opacity-50" />
-                    <p>Hali sevimli kinolar yo'q</p>
+                  <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
+                    <MessageSquare className="w-5 h-5 text-green-500" />
+                    <div>
+                      <p className="font-medium">"The Dark Knight" filmiga sharh yozdi</p>
+                      <p className="text-sm text-muted-foreground">1 kun oldin</p>
+                    </div>
                   </div>
-                )}
+                  <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
+                    <Heart className="w-5 h-5 text-red-500" />
+                    <div>
+                      <p className="font-medium">"Pulp Fiction" filmini sevimlilarga qo'shdi</p>
+                      <p className="text-sm text-muted-foreground">3 kun oldin</p>
+                    </div>
+                  </div>
+                </div>
               </CardContent>
             </Card>
           </TabsContent>
 
-          <TabsContent value="ratings">
-            <Card>
-              <CardHeader>
-                <CardTitle>Baholangan Kinolar</CardTitle>
-                <CardDescription>Siz baho bergan kinolar ro'yxati</CardDescription>
-              </CardHeader>
-              <CardContent>
-                {ratings.length > 0 ? (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
-                    {ratings.map((movie) => (
-                      <div key={movie.id} className="relative">
-                        <MovieCard movie={{ ...movie, genres: [], tags: [] }} />
-                        <div className="absolute top-2 left-2 bg-black/80 backdrop-blur-sm rounded-full px-2 py-1 flex items-center space-x-1">
-                          <Star className="h-3 w-3 text-yellow-400 fill-current" />
-                          <span className="text-white text-xs font-medium">{movie.user_rating}</span>
-                        </div>
+          <TabsContent value="stats" className="space-y-6">
+            <div className="grid md:grid-cols-2 gap-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Sevimli janrlar</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div>
+                    <div className="flex justify-between mb-1">
+                      <span className="text-sm">Action</span>
+                      <span className="text-sm">85%</span>
+                    </div>
+                    <Progress value={85} />
+                  </div>
+                  <div>
+                    <div className="flex justify-between mb-1">
+                      <span className="text-sm">Drama</span>
+                      <span className="text-sm">72%</span>
+                    </div>
+                    <Progress value={72} />
+                  </div>
+                  <div>
+                    <div className="flex justify-between mb-1">
+                      <span className="text-sm">Comedy</span>
+                      <span className="text-sm">68%</span>
+                    </div>
+                    <Progress value={68} />
+                  </div>
+                  <div>
+                    <div className="flex justify-between mb-1">
+                      <span className="text-sm">Thriller</span>
+                      <span className="text-sm">54%</span>
+                    </div>
+                    <Progress value={54} />
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>Oylik faoliyat</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-2">
+                    {["Yan", "Fev", "Mar", "Apr", "May", "Iyun"].map((month, index) => (
+                      <div key={month} className="flex items-center gap-3">
+                        <span className="w-8 text-sm">{month}</span>
+                        <Progress value={Math.random() * 100} className="flex-1" />
+                        <span className="w-8 text-sm text-right">{Math.floor(Math.random() * 50)}</span>
                       </div>
                     ))}
                   </div>
-                ) : (
-                  <div className="text-center py-8 text-muted-foreground">
-                    <Star className="h-16 w-16 mx-auto mb-4 opacity-50" />
-                    <p>Hali kinolarga baho bermagan</p>
+                </CardContent>
+              </Card>
+            </div>
+          </TabsContent>
+
+          <TabsContent value="achievements" className="space-y-6">
+            <div className="grid md:grid-cols-2 gap-4">
+              {achievements.map((achievement) => (
+                <Card key={achievement.id} className={achievement.earned ? "border-green-200 bg-green-50" : ""}>
+                  <CardContent className="p-4">
+                    <div className="flex items-start gap-3">
+                      <div className="text-2xl">{achievement.icon}</div>
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 mb-1">
+                          <h3 className="font-semibold">{achievement.name}</h3>
+                          {achievement.earned && <Trophy className="w-4 h-4 text-yellow-500" />}
+                        </div>
+                        <p className="text-sm text-muted-foreground mb-2">{achievement.description}</p>
+                        <div className="space-y-1">
+                          <div className="flex justify-between text-xs">
+                            <span>
+                              {achievement.progress}/{achievement.max_progress}
+                            </span>
+                            <span>{Math.round((achievement.progress / achievement.max_progress) * 100)}%</span>
+                          </div>
+                          <Progress value={(achievement.progress / achievement.max_progress) * 100} />
+                        </div>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          </TabsContent>
+
+          <TabsContent value="edit" className="space-y-6">
+            <Card>
+              <CardHeader>
+                <CardTitle>Profil ma'lumotlarini tahrirlash</CardTitle>
+                <CardDescription>Shaxsiy ma'lumotlaringizni yangilang</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <form onSubmit={handleSubmit} className="space-y-4">
+                  <div className="grid md:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="full_name">To'liq ism</Label>
+                      <Input id="full_name" name="full_name" defaultValue={profile.full_name} required />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="username">Foydalanuvchi nomi</Label>
+                      <Input id="username" name="username" defaultValue={profile.username} required />
+                    </div>
                   </div>
-                )}
+
+                  <div className="space-y-2">
+                    <Label htmlFor="bio">Bio</Label>
+                    <Textarea
+                      id="bio"
+                      name="bio"
+                      defaultValue={profile.bio}
+                      placeholder="O'zingiz haqingizda qisqacha..."
+                      rows={3}
+                    />
+                  </div>
+
+                  <div className="grid md:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="location">Joylashuv</Label>
+                      <Input
+                        id="location"
+                        name="location"
+                        defaultValue={profile.location}
+                        placeholder="Shahar, Mamlakat"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="website">Veb-sayt</Label>
+                      <Input
+                        id="website"
+                        name="website"
+                        type="url"
+                        defaultValue={profile.website}
+                        placeholder="https://example.com"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="birth_date">Tug'ilgan sana</Label>
+                    <Input id="birth_date" name="birth_date" type="date" defaultValue={profile.birth_date} />
+                  </div>
+
+                  <Button type="submit" disabled={saving}>
+                    {saving ? "Saqlanmoqda..." : "Saqlash"}
+                  </Button>
+                </form>
               </CardContent>
             </Card>
           </TabsContent>
         </Tabs>
-      </main>
+      </div>
     </div>
   )
 }
