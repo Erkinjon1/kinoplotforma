@@ -35,6 +35,7 @@ interface CommentsSectionProps {
 }
 
 export default function CommentsSection({ movieId, user }: CommentsSectionProps) {
+  alert("tttttttttttttt")
   const [comments, setComments] = useState<Comment[]>([])
   const [loading, setLoading] = useState(true)
   const [newComment, setNewComment] = useState("")
